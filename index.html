@@ -481,12 +481,19 @@ const USE_SUPABASE = SUPABASE_URL !== '' && SUPABASE_KEY !== '';
 
 // ── Auth helpers ──────────────────────────────────────────────────────────
 function getStoredToken() {
-  // Supabase stores the session in localStorage after OAuth redirect
   try {
-    const projectRef = SUPABASE_URL.split('//')[1].split('.')[0];
-    const raw = localStorage.getItem(`sb-${projectRef}-auth-token`);
-    if (!raw) return null;
-    return JSON.parse(raw).access_token || null;
+    // Scan all localStorage keys — Supabase key format can vary
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.includes('auth-token') || key && key.includes('auth.token')) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        const token = parsed.access_token || parsed?.currentSession?.access_token;
+        if (token) return token;
+      }
+    }
+    return null;
   } catch { return null; }
 }
 
@@ -1273,6 +1280,10 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(o=>{
   o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});
 });
+// Temporary debug — remove after fixing
+console.log('URL hash:', window.location.hash);
+console.log('localStorage keys:', Object.keys(localStorage));
+console.log('Stored token:', getStoredToken());
 
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
