@@ -1280,6 +1280,28 @@ async function init() {
   document.getElementById('app-shell').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
 
+  // If Supabase redirected back with a token in the URL hash, store it first
+  const hash = window.location.hash;
+  if (hash && hash.includes('access_token')) {
+    try {
+      const params = new URLSearchParams(hash.slice(1));
+      const accessToken = params.get('access_token');
+      const refreshToken = params.get('refresh_token');
+      const expiresIn = params.get('expires_in');
+      const projectRef = SUPABASE_URL.split('//')[1].split('.')[0];
+      const session = {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        expires_at: Math.floor(Date.now() / 1000) + parseInt(expiresIn || '3600'),
+      };
+      localStorage.setItem(`sb-${projectRef}-auth-token`, JSON.stringify(session));
+      // Clean the URL so the token isn't visible in the address bar
+      window.history.replaceState(null, '', window.location.pathname);
+    } catch (e) {
+      console.error('Failed to parse auth token from URL:', e);
+    }
+  }
+
   const user = await getSession();
 
   if (!user) {
