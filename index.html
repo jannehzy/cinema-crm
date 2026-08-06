@@ -134,6 +134,22 @@
   .rel-link:hover { opacity: 0.75; }
   .form-hint { font-size: 11px; color: var(--text3); margin-top: 4px; }
 
+  /* Assign board */
+  .assign-board { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; align-items: flex-start; }
+  .assign-col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); width: 240px; flex-shrink: 0; display: flex; flex-direction: column; max-height: calc(100vh - 160px); }
+  .assign-col-header { padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+  .assign-col-title { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 4px; }
+  .assign-col-date { font-size: 11px; color: var(--text3); font-family: 'DM Mono', monospace; margin-bottom: 6px; }
+  .assign-col-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+  .assign-col-body { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; min-height: 60px; transition: background 0.15s; }
+  .assign-col-body.drag-over { background: var(--accent-light); }
+  .assign-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 9px; display: flex; align-items: center; gap: 8px; cursor: grab; font-size: 12.5px; transition: box-shadow 0.15s, border-color 0.15s; }
+  .assign-card:active { cursor: grabbing; }
+  .assign-card:hover { border-color: var(--border2); }
+  .assign-card.dragging { opacity: 0.4; }
+  .assign-card .avatar { width: 22px; height: 22px; font-size: 9px; flex-shrink: 0; }
+  .assign-empty-hint { font-size: 12px; color: var(--text3); text-align: center; padding: 14px 6px; }
+
   /* Loading / toast */
   .loading-bar { position: fixed; top: 0; left: 0; right: 0; height: 2px; background: var(--accent); z-index: 200; transform: scaleX(0); transform-origin: left; transition: transform 0.3s ease; }
   .loading-bar.active { transform: scaleX(0.7); }
@@ -274,6 +290,11 @@
         Planning
         <span class="nav-count" id="nav-planning-count">0</span>
       </button>
+      <button class="nav-btn" onclick="showPage('assign')">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="10" rx="1"/></svg>
+        Assign
+        <span class="nav-count" id="nav-assign-count">0</span>
+      </button>
     </nav>
     <div class="nav-footer" id="nav-footer">
       <button class="btn" style="width:100%;justify-content:center;" onclick="exportJSON()">
@@ -337,6 +358,14 @@
         <p>No upcoming events</p><small>All events have already taken place, or none have been added yet.</small>
       </div>
     </div>
+
+    <div class="page" id="page-assign">
+      <div class="assign-board" id="assign-board"></div>
+      <div id="assign-empty" class="empty-state" style="display:none;">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="10" rx="1"/></svg>
+        <p>Nothing to assign yet</p><small>Mark attendees "Responded Yes" on an upcoming event to see them here.</small>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -367,6 +396,15 @@
         <label class="form-label">Has invited</label>
         <select id="a-invitees" multiple style="width:100%;min-height:90px;"></select>
         <div class="form-hint">Hold Ctrl (Windows) or ⌘ (Mac) to select multiple people.</div>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Gender</label>
+        <select id="a-gender">
+          <option value="">— unspecified —</option>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+          <option value="other">Other</option>
+        </select>
       </div>
       <div class="form-row" id="event-assign-wrap" style="display:none;">
         <label class="form-label">Event assignments &amp; status</label>
@@ -454,6 +492,13 @@
       <span class="mobile-nav-count" id="mnav-planning-count">0</span>
     </span>
     Planning
+  </button>
+  <button class="mobile-nav-btn" id="mnav-assign" onclick="showPage('assign')">
+    <span class="mobile-nav-icon">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="10" rx="1"/></svg>
+      <span class="mobile-nav-count" id="mnav-assign-count">0</span>
+    </span>
+    Assign
   </button>
   <button class="mobile-nav-btn" onclick="exportJSON()">
     <span class="mobile-nav-icon">
@@ -614,7 +659,7 @@ async function loadAll() {
       const rows = await sb('GET', 'attendees?select=*&order=lastname,firstname');
       attendees = rows.map(r => ({
         id: r.id, firstname: r.firstname, lastname: r.lastname,
-        insta: r.insta, notes: r.notes,
+        insta: r.insta, notes: r.notes, gender: r.gender || null,
         partnerId: r.partner_id, invitedById: r.invited_by_id,
         createdAt: r.created_at,
       }));
@@ -675,9 +720,13 @@ function getLink(ev, attendeeId) {
 function attendeeEvents(id)  { return events.filter(ev => getLink(ev, id)); }
 function attendedEvents(id)  { return events.filter(ev => { const l = getLink(ev,id); return l && l.status==='attended'; }); }
 function attendanceCount(id) { return attendedEvents(id).length; }
+function genderLabel(g) {
+  const map = { male: 'Male', female: 'Female', other: 'Other' };
+  return map[g] || '—';
+}
 function getPartner(a)       { return a.partnerId ? attendees.find(x=>x.id===a.partnerId)||null : null; }
 function getInvitedBy(a)     { return a.invitedById ? attendees.find(x=>x.id===a.invitedById)||null : null; }
-function getInvitees(a)      { return attendees.filter(x=>x.invitedById===a.id); }
+function getInvitees(a)      { return attendees.filter(x=>x.invitedById===a.id).sort((x,y)=>(x.firstname||'').toLowerCase()<(y.firstname||'').toLowerCase()?-1:1); }
 
 function relationshipTags(a) {
   const parts = [];
@@ -695,11 +744,11 @@ function showPage(page) {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   const navBtns = document.querySelectorAll('.nav-btn');
-  const pageIdx = {attendees:0, events:1, planning:2};
+  const pageIdx = {attendees:0, events:1, planning:2, assign:3};
   navBtns[pageIdx[page]].classList.add('active');
-  document.getElementById('topbar-title').textContent = {attendees:'Attendees', events:'Events', planning:'Planning'}[page]||page;
+  document.getElementById('topbar-title').textContent = {attendees:'Attendees', events:'Events', planning:'Planning', assign:'Assign'}[page]||page;
   document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.remove('active'));
-  const mnavId = {attendees:'mnav-attendees', events:'mnav-events', planning:'mnav-planning'}[page];
+  const mnavId = {attendees:'mnav-attendees', events:'mnav-events', planning:'mnav-planning', assign:'mnav-assign'}[page];
   if (mnavId) { const mb = document.getElementById(mnavId); if (mb) mb.classList.add('active'); }
   const sw = document.getElementById('search-wrap');
   const ab = document.getElementById('add-btn');
@@ -718,6 +767,10 @@ function showPage(page) {
     sw.style.display='none'; ab.style.display='none';
     if(filterBar) filterBar.style.display='none';
     renderPlanning();
+  } else if (page==='assign') {
+    sw.style.display='none'; ab.style.display='none';
+    if(filterBar) filterBar.style.display='none';
+    renderAssign();
   }
 }
 
@@ -814,6 +867,7 @@ function openAddAttendee() {
   editingAttendeeId=null;
   document.getElementById('modal-attendee-title').textContent='Add attendee';
   ['a-firstname','a-lastname','a-insta','a-notes'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('a-gender').value='';
   renderRelationshipDropdowns(null,null,[]);
   renderEventCheckboxes({});
   openModal('modal-attendee');
@@ -828,6 +882,7 @@ function openEditAttendee(e,id) {
   document.getElementById('a-lastname').value=a.lastname||'';
   document.getElementById('a-insta').value=a.insta||'';
   document.getElementById('a-notes').value=a.notes||'';
+  document.getElementById('a-gender').value=a.gender||'';
   const currentInvitees=attendees.filter(x=>x.invitedById===id).map(x=>x.id);
   renderRelationshipDropdowns(a.partnerId||null,a.invitedById||null,currentInvitees);
   const eventStatusMap={};
@@ -838,7 +893,7 @@ function openEditAttendee(e,id) {
 
 function renderRelationshipDropdowns(partnerId,invitedById,inviteeIds) {
   const others=attendees.filter(a=>a.id!==editingAttendeeId)
-    .sort((a,b)=>(a.lastname||'').toLowerCase()<(b.lastname||'').toLowerCase()?-1:1);
+    .sort((a,b)=>(a.firstname||'').toLowerCase()<(b.firstname||'').toLowerCase()?-1:1);
   const mkOptions=sel=>`<option value="">— none —</option>`+
     others.map(a=>`<option value="${a.id}" ${a.id===sel?'selected':''}>${fullName(a)}</option>`).join('');
   document.getElementById('a-partner').innerHTML=mkOptions(partnerId);
@@ -883,6 +938,7 @@ async function saveAttendee() {
   const invitedById=document.getElementById('a-invitedby').value||null;
   const insta=document.getElementById('a-insta').value.trim().replace(/^@/,'');
   const notes=document.getElementById('a-notes').value.trim();
+  const gender=document.getElementById('a-gender').value||null;
   const checkedInvitees=[...document.querySelectorAll('#a-invitees option:checked')].map(o=>o.value);
   const checkedBoxes=[...document.querySelectorAll('#event-checkbox-list input[type=checkbox]:checked')];
   const btn=document.getElementById('save-attendee-btn');
@@ -890,18 +946,18 @@ async function saveAttendee() {
   try {
     if (USE_SUPABASE) {
       const payload={
-        firstname:fn, lastname:ln, insta:insta||null, notes:notes||null,
+        firstname:fn, lastname:ln, insta:insta||null, notes:notes||null, gender:gender,
         partner_id:partnerId, invited_by_id:invitedById,
       };
       let myId=editingAttendeeId;
       if (myId) {
         await sb('PATCH',`attendees?id=eq.${myId}`,payload);
         const idx=attendees.findIndex(a=>a.id===myId);
-        attendees[idx]={...attendees[idx],firstname:fn,lastname:ln,insta,notes,partnerId,invitedById};
+        attendees[idx]={...attendees[idx],firstname:fn,lastname:ln,insta,notes,gender,partnerId,invitedById};
       } else {
         const [row]=await sb('POST','attendees',payload);
         myId=row.id;
-        attendees.push({id:myId,firstname:fn,lastname:ln,insta,notes,partnerId,invitedById,createdAt:row.created_at});
+        attendees.push({id:myId,firstname:fn,lastname:ln,insta,notes,gender,partnerId,invitedById,createdAt:row.created_at});
         editingAttendeeId=myId;
       }
       const oldPartner=attendees.find(a=>a.id!==myId&&a.partnerId===myId);
@@ -947,7 +1003,7 @@ async function saveAttendee() {
         }
       }
     } else {
-      const data={firstname:fn,lastname:ln,insta,notes,partnerId,invitedById};
+      const data={firstname:fn,lastname:ln,insta,notes,gender,partnerId,invitedById};
       let myId=editingAttendeeId;
       if(myId){
         const idx=attendees.findIndex(a=>a.id===myId);
@@ -1033,6 +1089,10 @@ function openDetail(e,id) {
       ${invitees.length?`<div class="detail-row"><span class="detail-key">Has invited</span><div class="rel-tags">${invitees.map(inv=>`<span class="badge badge-purple rel-link" onclick="closeModal('modal-detail');openDetail(event,'${inv.id}')">↓ ${fullName(inv)}</span>`).join('')}</div></div>`:''}
     </div>`:''}
     <div class="detail-section">
+      <div class="detail-section-title">Gender</div>
+      <div class="detail-row"><span class="detail-key">Gender</span><span class="detail-val">${genderLabel(a.gender)}</span></div>
+    </div>
+    <div class="detail-section">
       <div class="detail-section-title">Event history (${assignedEvents.length})</div>
       ${assignedEvents.length?assignedEvents.map(ev=>{
         const link=getLink(ev,a.id);
@@ -1058,7 +1118,12 @@ function openDetail(e,id) {
             connMap[l.attendeeId].events.push(ev.name);
           });
         });
-        const conns=Object.entries(connMap).sort((x,y)=>y[1].count-x[1].count);
+        const conns=Object.entries(connMap).sort((x,y)=>{
+          if (y[1].count !== x[1].count) return y[1].count - x[1].count;
+          const na=(attendees.find(z=>z.id===x[0])||{}).firstname||'';
+          const nb=(attendees.find(z=>z.id===y[0])||{}).firstname||'';
+          return na.toLowerCase() < nb.toLowerCase() ? -1 : 1;
+        });
         if(!conns.length) return '<p style="font-size:13px;color:var(--text3);padding:6px 0;">No connections yet — attend events together to see them here.</p>';
         return conns.map(([cid,info])=>{
           const ca=attendees.find(x=>x.id===cid); if(!ca) return '';
@@ -1130,9 +1195,11 @@ function renderPlanning() {
       _status: l.status
     })).filter(a=>a.id);
     const statusOrder = ['attended','assigned','responded-yes','invited','responded-no'];
-    const sorted = [...allAttendees].sort((a,b) =>
-      statusOrder.indexOf(a._status) - statusOrder.indexOf(b._status)
-    );
+    const sorted = [...allAttendees].sort((a,b) => {
+      const so = statusOrder.indexOf(a._status) - statusOrder.indexOf(b._status);
+      if (so !== 0) return so;
+      return (a.firstname||'').toLowerCase() < (b.firstname||'').toLowerCase() ? -1 : 1;
+    });
     return `<div class="event-card" onclick="openEventDetail('${ev.id}')">
       <div class="event-card-name">${ev.name}</div>
       <div class="event-card-date">${formatDate(ev.date)}</div>
@@ -1150,6 +1217,197 @@ function renderPlanning() {
       </div>
     </div>`;
   }).join('');
+}
+
+// ── Assign board ──────────────────────────────────────────────────────────
+// The boxes are the same "upcoming" events shown on the Planning page —
+// so renaming an event automatically renames its box, and a new upcoming
+// event automatically gets its own box.
+function boxedEvents() {
+  const today = new Date().toISOString().slice(0,10);
+  return [...events].filter(ev => ev.date && ev.date > today).sort((a,b) => a.date < b.date ? -1 : 1);
+}
+
+// Sets (or creates/removes) a single attendee↔event status link, keeping
+// both Supabase and the localStorage fallback in sync.
+async function setLinkStatus(eventId, attendeeId, status) {
+  const ev = events.find(e => e.id === eventId); if (!ev) return;
+  ev.attendees = ev.attendees || [];
+  const existing = ev.attendees.find(l => l.attendeeId === attendeeId);
+  if (USE_SUPABASE) {
+    if (existing) {
+      await sb('PATCH', `event_attendees?id=eq.${existing.linkId}`, { status });
+      existing.status = status;
+    } else {
+      const [link] = await sb('POST', 'event_attendees', { event_id: eventId, attendee_id: attendeeId, status });
+      ev.attendees.push({ attendeeId, status, linkId: link.id });
+    }
+  } else {
+    if (existing) existing.status = status;
+    else ev.attendees.push({ attendeeId, status });
+    lsSave();
+  }
+}
+
+// Reverts any other "assigned" link this attendee holds among the boxed
+// events back to "responded-yes", since an attendee can only be assigned
+// to one event at a time.
+async function clearOtherAssignments(attendeeId, exceptEventId) {
+  for (const ev of boxedEvents()) {
+    if (ev.id === exceptEventId) continue;
+    const l = getLink(ev, attendeeId);
+    if (l && l.status === 'assigned') await setLinkStatus(ev.id, attendeeId, 'responded-yes');
+  }
+}
+
+function attendedTogether(id1, id2) {
+  return events.some(ev => {
+    const l1 = getLink(ev, id1), l2 = getLink(ev, id2);
+    return l1 && l2 && l1.status === 'attended' && l2.status === 'attended';
+  });
+}
+
+// Repeat Factor = (2 × number of pairs in the group who've attended a
+// past event together) / group size.
+function repeatFactor(group) {
+  if (group.length < 2) return 0;
+  let pairs = 0;
+  for (let i = 0; i < group.length; i++) {
+    for (let j = i + 1; j < group.length; j++) {
+      if (attendedTogether(group[i].id, group[j].id)) pairs++;
+    }
+  }
+  return (2 * pairs) / group.length;
+}
+
+function genderRatioLabel(group) {
+  if (!group.length) return '—';
+  const counts = { male: 0, female: 0, other: 0, unspecified: 0 };
+  group.forEach(a => counts[a.gender && counts.hasOwnProperty(a.gender) ? a.gender : 'unspecified']++);
+  const parts = [];
+  if (counts.male) parts.push(`${counts.male}M`);
+  if (counts.female) parts.push(`${counts.female}F`);
+  if (counts.other) parts.push(`${counts.other}O`);
+  if (counts.unspecified) parts.push(`${counts.unspecified}?`);
+  return parts.length ? parts.join(' : ') : '—';
+}
+
+// An attendee shows up on the Assign board if, among the boxed (upcoming)
+// events, they have a "responded-yes" link (→ Repository) or an
+// "assigned" link (→ that event's box).
+function assignBoardData() {
+  const boxes = boxedEvents();
+  const repo = [];
+  const byEvent = {}; boxes.forEach(ev => byEvent[ev.id] = []);
+  attendees.forEach(a => {
+    let assignedEventId = null;
+    let hasRespondedYes = false;
+    boxes.forEach(ev => {
+      const l = getLink(ev, a.id);
+      if (l && l.status === 'assigned') assignedEventId = ev.id;
+      if (l && l.status === 'responded-yes') hasRespondedYes = true;
+    });
+    if (assignedEventId) byEvent[assignedEventId].push(a);
+    else if (hasRespondedYes) repo.push(a);
+  });
+  const byFirst = (a,b) => (a.firstname||'').toLowerCase() < (b.firstname||'').toLowerCase() ? -1 : 1;
+  repo.sort(byFirst);
+  boxes.forEach(ev => byEvent[ev.id].sort(byFirst));
+  return { boxes, repo, byEvent };
+}
+
+function assignCardHTML(a) {
+  return `<div class="assign-card" draggable="true" data-id="${a.id}" ondragstart="onAssignDragStart(event)" ondragend="onAssignDragEnd(event)">
+    <div class="avatar ${avColor(fullName(a))}">${initials(a)}</div>
+    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${fullName(a)}</span>
+  </div>`;
+}
+
+function renderAssign() {
+  const { boxes, repo, byEvent } = assignBoardData();
+  const board = document.getElementById('assign-board');
+  const empty = document.getElementById('assign-empty');
+  const total = repo.length + Object.values(byEvent).reduce((s,l)=>s+l.length,0);
+  document.getElementById('nav-assign-count').textContent = total;
+  const mac = document.getElementById('mnav-assign-count'); if (mac) mac.textContent = total;
+
+  if (!boxes.length) {
+    board.innerHTML = ''; empty.style.display = '';
+    empty.querySelector('p').textContent = 'No upcoming events';
+    empty.querySelector('small').textContent = 'Create an upcoming event before assigning attendees to it.';
+    return;
+  }
+  empty.style.display = 'none';
+
+  let html = `<div class="assign-col" data-box="repository">
+    <div class="assign-col-header">
+      <div class="assign-col-title">Repository</div>
+      <div class="assign-col-meta"><span class="badge badge-gray">${repo.length}</span></div>
+    </div>
+    <div class="assign-col-body" id="assign-body-repository" ondragover="onAssignDragOver(event)" ondragleave="onAssignDragLeave(event)" ondrop="onAssignDrop(event,'repository')">
+      ${repo.length ? repo.map(assignCardHTML).join('') : '<div class="assign-empty-hint">No one waiting here.</div>'}
+    </div>
+  </div>`;
+
+  boxes.forEach(ev => {
+    const group = byEvent[ev.id];
+    const rf = repeatFactor(group);
+    html += `<div class="assign-col" data-box="${ev.id}">
+      <div class="assign-col-header">
+        <div class="assign-col-title">${ev.name}</div>
+        <div class="assign-col-date">${formatDate(ev.date)}</div>
+        <div class="assign-col-meta">
+          <span class="badge badge-blue">${group.length} assigned</span>
+          <span class="badge badge-purple" title="Repeat Factor">RF ${rf.toFixed(2)}</span>
+          <span class="badge badge-pink" title="Gender ratio">${genderRatioLabel(group)}</span>
+        </div>
+      </div>
+      <div class="assign-col-body" id="assign-body-${ev.id}" ondragover="onAssignDragOver(event)" ondragleave="onAssignDragLeave(event)" ondrop="onAssignDrop(event,'${ev.id}')">
+        ${group.length ? group.map(assignCardHTML).join('') : '<div class="assign-empty-hint">Drag attendees here.</div>'}
+      </div>
+    </div>`;
+  });
+
+  board.innerHTML = html;
+}
+
+let assignDraggedId = null;
+function onAssignDragStart(e) {
+  assignDraggedId = e.currentTarget.dataset.id;
+  e.currentTarget.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', assignDraggedId);
+}
+function onAssignDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  assignDraggedId = null;
+}
+function onAssignDragOver(e) {
+  e.preventDefault();
+  e.currentTarget.classList.add('drag-over');
+}
+function onAssignDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+async function onAssignDrop(e, boxId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const attendeeId = e.dataTransfer.getData('text/plain') || assignDraggedId;
+  if (!attendeeId) return;
+  setLoading(true);
+  try {
+    if (boxId === 'repository') {
+      await clearOtherAssignments(attendeeId, null);
+    } else {
+      await clearOtherAssignments(attendeeId, boxId);
+      await setLinkStatus(boxId, attendeeId, 'assigned');
+    }
+    renderAssign();
+  } catch (err) {
+    toast('Error updating assignment: ' + err.message, true);
+  } finally {
+    setLoading(false);
+  }
 }
 
 function openAddEvent() {
@@ -1222,7 +1480,8 @@ async function deleteEvent(id) {
 function openEventDetail(id) {
   const ev=events.find(x=>x.id===id); if(!ev) return;
   const links=ev.attendees||[];
-  const attendeeList=links.map(l=>({...attendees.find(a=>a.id===l.attendeeId),_status:l.status})).filter(a=>a.id);
+  const attendeeList=links.map(l=>({...attendees.find(a=>a.id===l.attendeeId),_status:l.status})).filter(a=>a.id)
+    .sort((a,b)=>(a.firstname||'').toLowerCase()<(b.firstname||'').toLowerCase()?-1:1);
   document.getElementById('event-detail-title').textContent=ev.name;
   document.getElementById('event-detail-body').innerHTML=`
     <div class="detail-section">
@@ -1254,7 +1513,7 @@ function exportJSON() {
     exportedAt: new Date().toISOString(),
     attendees: attendees.map(a => ({
       id: a.id, firstname: a.firstname, lastname: a.lastname,
-      insta: a.insta, notes: a.notes,
+      insta: a.insta, notes: a.notes, gender: a.gender,
       partnerId: a.partnerId, invitedById: a.invitedById,
       createdAt: a.createdAt,
     })),
@@ -1280,11 +1539,6 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(o=>{
   o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});
 });
-// Temporary debug — remove after fixing
-console.log('URL hash:', window.location.hash);
-console.log('localStorage keys:', Object.keys(localStorage));
-console.log('Stored token:', getStoredToken());
-
 // ── Init ──────────────────────────────────────────────────────────────────
 async function init() {
   // Always start with login screen visible, app hidden
@@ -1347,11 +1601,15 @@ async function init() {
   await loadAll();
   renderAttendees();
   const upcomingCount = events.filter(ev => ev.date && ev.date > new Date().toISOString().slice(0,10)).length;
+  const { repo, byEvent } = assignBoardData();
+  const assignCount = repo.length + Object.values(byEvent).reduce((s,l)=>s+l.length,0);
   document.getElementById('nav-event-count').textContent = events.length;
   document.getElementById('nav-planning-count').textContent = upcomingCount;
+  document.getElementById('nav-assign-count').textContent = assignCount;
   document.getElementById('mnav-attendee-count').textContent = attendees.length;
   document.getElementById('mnav-event-count').textContent = events.length;
   document.getElementById('mnav-planning-count').textContent = upcomingCount;
+  document.getElementById('mnav-assign-count').textContent = assignCount;
 }
 
 init();
