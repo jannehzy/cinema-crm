@@ -143,11 +143,24 @@
   .assign-col-meta { display: flex; flex-wrap: wrap; gap: 4px; }
   .assign-col-body { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; min-height: 60px; transition: background 0.15s; }
   .assign-col-body.drag-over { background: var(--accent-light); }
-  .assign-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 9px; display: flex; align-items: center; gap: 8px; cursor: grab; font-size: 12.5px; transition: box-shadow 0.15s, border-color 0.15s; }
+  .assign-card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 9px; display: flex; align-items: flex-start; gap: 8px; cursor: grab; font-size: 12.5px; transition: box-shadow 0.15s, border-color 0.15s; touch-action: none; -webkit-user-select: none; user-select: none; }
   .assign-card:active { cursor: grabbing; }
   .assign-card:hover { border-color: var(--border2); }
-  .assign-card.dragging { opacity: 0.4; }
-  .assign-card .avatar { width: 22px; height: 22px; font-size: 9px; flex-shrink: 0; }
+  .assign-card.dragging { opacity: 0.35; }
+  .assign-card .avatar { width: 22px; height: 22px; font-size: 9px; flex-shrink: 0; margin-top: 1px; }
+  .assign-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .assign-card-events { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+  .assign-card-events .badge { font-size: 9px; padding: 1px 5px; }
+  .assign-ghost { position: fixed; z-index: 1000; pointer-events: none; opacity: 0.9; box-shadow: var(--shadow-md); transform: scale(1.02); }
+
+  /* Bulk select */
+  .row-check, .card-check { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+  .bulk-bar { display: none; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--accent-light); border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 12px; font-size: 12.5px; }
+  .bulk-bar.show { display: flex; }
+  .bulk-bar-count { font-weight: 600; color: var(--accent-text); white-space: nowrap; }
+  .bulk-bar-group { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .bulk-bar select { font-size: 12px; padding: 5px 7px; }
+  .bulk-bar .btn { font-size: 12px; padding: 5px 10px; }
   .assign-empty-hint { font-size: 12px; color: var(--text3); text-align: center; padding: 14px 6px; }
 
   /* Loading / toast */
@@ -328,10 +341,36 @@
         <button id="sort-btn-firstname" class="btn" style="font-size:12px;padding:5px 12px;" onclick="setSortAttendees('firstname')">First Name<span class="sort-arrow"></span></button>
         <button id="sort-btn-attendance" class="btn" style="font-size:12px;padding:5px 12px;" onclick="setSortAttendees('attendance')">Attendance<span class="sort-arrow"></span></button>
       </div>
+      <div class="bulk-bar" id="bulk-bar">
+        <span class="bulk-bar-count" id="bulk-bar-count">0 selected</span>
+        <div class="bulk-bar-group">
+          <span>Set gender:</span>
+          <select id="bulk-gender">
+            <option value="">— unspecified —</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+            <option value="other">Other</option>
+          </select>
+          <button class="btn btn-primary" onclick="applyBulkGender()">Apply</button>
+        </div>
+        <div class="bulk-bar-group">
+          <span>Set status for:</span>
+          <select id="bulk-event"></select>
+          <select id="bulk-status">
+            <option value="invited">Invited</option>
+            <option value="responded-yes">Responded Yes</option>
+            <option value="responded-no">Responded No</option>
+            <option value="assigned">Assigned</option>
+            <option value="attended">Attended</option>
+          </select>
+          <button class="btn btn-primary" onclick="applyBulkEventStatus()">Apply</button>
+        </div>
+        <button class="btn" onclick="clearSelection()" style="margin-left:auto;">Clear selection</button>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Name</th><th>Insta</th><th>Relationships</th><th>Attended Events</th><th></th></tr>
+            <tr><th style="width:32px;"><input type="checkbox" class="row-check" id="select-all-check" onchange="toggleSelectAll(this)" title="Select all"></th><th>Name</th><th>Relationships</th><th>Attended Events</th><th></th></tr>
           </thead>
           <tbody id="attendee-tbody"></tbody>
         </table>
@@ -381,7 +420,6 @@
         <div class="form-row"><label class="form-label">First name</label><input type="text" id="a-firstname" placeholder="Jamie"></div>
         <div class="form-row"><label class="form-label">Last name</label><input type="text" id="a-lastname" placeholder="Lee"></div>
       </div>
-      <div class="form-row"><label class="form-label">Insta</label><input type="text" id="a-insta" placeholder="@username"></div>
       <div class="form-row"><label class="form-label">Notes</label><textarea id="a-notes" placeholder="How they found us, any notes…"></textarea></div>
       <div class="form-row">
         <label class="form-label">Partner (couple)</label>
@@ -659,8 +697,9 @@ async function loadAll() {
       const rows = await sb('GET', 'attendees?select=*&order=lastname,firstname');
       attendees = rows.map(r => ({
         id: r.id, firstname: r.firstname, lastname: r.lastname,
-        insta: r.insta, notes: r.notes, gender: r.gender || null,
+        notes: r.notes, gender: r.gender || null,
         partnerId: r.partner_id, invitedById: r.invited_by_id,
+        assignedEventId: r.assigned_event_id || null,
         createdAt: r.created_at,
       }));
       const evRows = await sb('GET', 'events?select=*&order=date.desc');
@@ -778,6 +817,85 @@ function showPage(page) {
 let attendeeSort = 'firstname';
 let attendeeSortDir = 'asc';
 
+// ── Bulk select ───────────────────────────────────────────────────────────
+let selectedAttendeeIds = new Set();
+
+function toggleAttendeeSelect(id, checked) {
+  if (checked) selectedAttendeeIds.add(id);
+  else selectedAttendeeIds.delete(id);
+  syncSelectionUI();
+}
+
+function toggleSelectAll(checkbox) {
+  const visibleIds = [...document.querySelectorAll('#attendee-tbody .row-check[data-id]')].map(c => c.dataset.id);
+  if (checkbox.checked) visibleIds.forEach(id => selectedAttendeeIds.add(id));
+  else visibleIds.forEach(id => selectedAttendeeIds.delete(id));
+  renderAttendees();
+}
+
+function clearSelection() {
+  selectedAttendeeIds.clear();
+  renderAttendees();
+}
+
+function syncSelectionUI() {
+  const bar = document.getElementById('bulk-bar');
+  const count = selectedAttendeeIds.size;
+  document.getElementById('bulk-bar-count').textContent = `${count} selected`;
+  bar.classList.toggle('show', count > 0);
+  const selectAll = document.getElementById('select-all-check');
+  if (selectAll) {
+    const visibleIds = [...document.querySelectorAll('#attendee-tbody .row-check[data-id]')].map(c => c.dataset.id);
+    selectAll.checked = visibleIds.length > 0 && visibleIds.every(id => selectedAttendeeIds.has(id));
+  }
+  const eventSel = document.getElementById('bulk-event');
+  if (eventSel) {
+    const sorted = [...events].sort((a,b)=>(b.date||'')<(a.date||'')?-1:1);
+    eventSel.innerHTML = sorted.map(ev => `<option value="${ev.id}">${ev.name}</option>`).join('') || '<option disabled>No events yet</option>';
+  }
+}
+
+async function applyBulkGender() {
+  if (!selectedAttendeeIds.size) return;
+  const gender = document.getElementById('bulk-gender').value || null;
+  const ids = [...selectedAttendeeIds];
+  setLoading(true);
+  try {
+    if (USE_SUPABASE) {
+      await sb('PATCH', `attendees?id=in.(${ids.join(',')})`, { gender });
+    }
+    ids.forEach(id => { const a = attendees.find(x=>x.id===id); if (a) a.gender = gender; });
+    if (!USE_SUPABASE) lsSave();
+    toast(`Gender updated for ${ids.length} attendee${ids.length>1?'s':''}.`);
+    renderAttendees();
+  } catch (err) {
+    toast('Error applying bulk gender update: ' + err.message, true);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function applyBulkEventStatus() {
+  if (!selectedAttendeeIds.size) return;
+  const eventId = document.getElementById('bulk-event').value;
+  if (!eventId) { toast('No event to apply to.', true); return; }
+  const status = document.getElementById('bulk-status').value;
+  const ids = [...selectedAttendeeIds];
+  setLoading(true);
+  try {
+    for (const id of ids) {
+      await setLinkStatus(eventId, id, status);
+    }
+    const labels = {'invited':'Invited','responded-yes':'Responded Yes','responded-no':'Responded No','assigned':'Assigned','attended':'Attended'};
+    toast(`Status set to "${labels[status]||status}" for ${ids.length} attendee${ids.length>1?'s':''}.`);
+    renderAttendees();
+  } catch (err) {
+    toast('Error applying bulk status update: ' + err.message, true);
+  } finally {
+    setLoading(false);
+  }
+}
+
 function setSortAttendees(field) {
   if (attendeeSort === field) attendeeSortDir = attendeeSortDir === 'asc' ? 'desc' : 'asc';
   else { attendeeSort = field; attendeeSortDir = 'asc'; }
@@ -788,7 +906,7 @@ function setSortAttendees(field) {
 function renderAttendees() {
   const q = (document.getElementById('search-input').value||'').toLowerCase();
   let list = [...attendees].filter(a =>
-    !q || fullName(a).toLowerCase().includes(q) || (a.insta||'').toLowerCase().includes(q)
+    !q || fullName(a).toLowerCase().includes(q)
   );
   list.sort((a, b) => {
     let va, vb;
@@ -823,8 +941,8 @@ function renderAttendees() {
       : '<span style="color:var(--text3);font-size:12px;">—</span>';
     const tr=document.createElement('tr');
     tr.innerHTML=`
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="row-check" data-id="${a.id}" ${selectedAttendeeIds.has(a.id)?'checked':''} onchange="toggleAttendeeSelect('${a.id}',this.checked)"></td>
       <td><div class="name-cell"><div class="avatar ${avColor(fullName(a))}">${initials(a)}</div><div><div style="font-weight:500;">${fullName(a)}</div></div></div></td>
-      <td class="td-muted">${a.insta?'@'+a.insta:'—'}</td>
       <td>${relationshipTags(a)}</td>
       <td><div class="rel-tags">${pastBadges}</div></td>
       <td><div class="row-actions">
@@ -841,10 +959,10 @@ function renderAttendees() {
       const partner = getPartner(a), invBy = getInvitedBy(a);
       return `<div class="attendee-card-item">
         <div class="attendee-card-top">
+          <input type="checkbox" class="card-check" data-id="${a.id}" ${selectedAttendeeIds.has(a.id)?'checked':''} onchange="toggleAttendeeSelect('${a.id}',this.checked)" onclick="event.stopPropagation()">
           <div class="avatar ${avColor(fullName(a))}" style="width:36px;height:36px;font-size:13px;flex-shrink:0;">${initials(a)}</div>
           <div style="flex:1;min-width:0;">
             <div style="font-weight:500;font-size:14px;">${fullName(a)}</div>
-            <div style="font-size:12px;color:var(--text3);">${a.insta?'@'+a.insta:'—'}</div>
           </div>
           <span class="badge badge-purple">${attended.length} attended</span>
         </div>
@@ -860,13 +978,14 @@ function renderAttendees() {
       </div>`;
     }).join('') || '';
   }
+  syncSelectionUI();
 }
 
 // ── Attendee form helpers ─────────────────────────────────────────────────
 function openAddAttendee() {
   editingAttendeeId=null;
   document.getElementById('modal-attendee-title').textContent='Add attendee';
-  ['a-firstname','a-lastname','a-insta','a-notes'].forEach(id=>document.getElementById(id).value='');
+  ['a-firstname','a-lastname','a-notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('a-gender').value='';
   renderRelationshipDropdowns(null,null,[]);
   renderEventCheckboxes({});
@@ -880,7 +999,6 @@ function openEditAttendee(e,id) {
   document.getElementById('modal-attendee-title').textContent='Edit attendee';
   document.getElementById('a-firstname').value=a.firstname||'';
   document.getElementById('a-lastname').value=a.lastname||'';
-  document.getElementById('a-insta').value=a.insta||'';
   document.getElementById('a-notes').value=a.notes||'';
   document.getElementById('a-gender').value=a.gender||'';
   const currentInvitees=attendees.filter(x=>x.invitedById===id).map(x=>x.id);
@@ -936,7 +1054,6 @@ async function saveAttendee() {
   if(!fn&&!ln){alert('Please enter at least a first or last name.');return;}
   const partnerId=document.getElementById('a-partner').value||null;
   const invitedById=document.getElementById('a-invitedby').value||null;
-  const insta=document.getElementById('a-insta').value.trim().replace(/^@/,'');
   const notes=document.getElementById('a-notes').value.trim();
   const gender=document.getElementById('a-gender').value||null;
   const checkedInvitees=[...document.querySelectorAll('#a-invitees option:checked')].map(o=>o.value);
@@ -946,18 +1063,18 @@ async function saveAttendee() {
   try {
     if (USE_SUPABASE) {
       const payload={
-        firstname:fn, lastname:ln, insta:insta||null, notes:notes||null, gender:gender,
+        firstname:fn, lastname:ln, notes:notes||null, gender:gender,
         partner_id:partnerId, invited_by_id:invitedById,
       };
       let myId=editingAttendeeId;
       if (myId) {
         await sb('PATCH',`attendees?id=eq.${myId}`,payload);
         const idx=attendees.findIndex(a=>a.id===myId);
-        attendees[idx]={...attendees[idx],firstname:fn,lastname:ln,insta,notes,gender,partnerId,invitedById};
+        attendees[idx]={...attendees[idx],firstname:fn,lastname:ln,notes,gender,partnerId,invitedById};
       } else {
         const [row]=await sb('POST','attendees',payload);
         myId=row.id;
-        attendees.push({id:myId,firstname:fn,lastname:ln,insta,notes,gender,partnerId,invitedById,createdAt:row.created_at});
+        attendees.push({id:myId,firstname:fn,lastname:ln,notes,gender,partnerId,invitedById,assignedEventId:null,createdAt:row.created_at});
         editingAttendeeId=myId;
       }
       const oldPartner=attendees.find(a=>a.id!==myId&&a.partnerId===myId);
@@ -1003,13 +1120,13 @@ async function saveAttendee() {
         }
       }
     } else {
-      const data={firstname:fn,lastname:ln,insta,notes,gender,partnerId,invitedById};
+      const data={firstname:fn,lastname:ln,notes,gender,partnerId,invitedById};
       let myId=editingAttendeeId;
       if(myId){
         const idx=attendees.findIndex(a=>a.id===myId);
         attendees[idx]={...attendees[idx],...data};
       } else {
-        data.id=uid(); data.createdAt=new Date().toISOString();
+        data.id=uid(); data.createdAt=new Date().toISOString(); data.assignedEventId=null;
         attendees.push(data); myId=data.id; editingAttendeeId=myId;
       }
       attendees.forEach(a=>{if(a.id!==myId&&a.partnerId===myId&&a.id!==partnerId)a.partnerId=null;});
@@ -1055,6 +1172,7 @@ async function deleteAttendee(e,id) {
       await sb('DELETE',`attendees?id=eq.${id}`);
     }
     attendees=attendees.filter(a=>a.id!==id);
+    selectedAttendeeIds.delete(id);
     attendees.forEach(a=>{if(a.partnerId===id)a.partnerId=null;if(a.invitedById===id)a.invitedById=null;});
     events.forEach(ev=>{ev.attendees=(ev.attendees||[]).filter(l=>l.attendeeId!==id);});
     if(!USE_SUPABASE) lsSave();
@@ -1077,10 +1195,6 @@ function openDetail(e,id) {
       <div class="avatar-xl ${avColor(fullName(a))}">${initials(a)}</div>
       <div><div class="detail-name">${fullName(a)}</div>
       <div class="detail-sub">Added ${a.createdAt?formatDate(a.createdAt.slice(0,10)):'—'}</div></div>
-    </div>
-    <div class="detail-section">
-      <div class="detail-section-title">Contact</div>
-      <div class="detail-row"><span class="detail-key">Insta</span><span class="detail-val" style="color:var(--blue);">${a.insta?'@'+a.insta:'—'}</span></div>
     </div>
     ${hasRels?`<div class="detail-section">
       <div class="detail-section-title">Relationships</div>
@@ -1229,7 +1343,8 @@ function boxedEvents() {
 }
 
 // Sets (or creates/removes) a single attendee↔event status link, keeping
-// both Supabase and the localStorage fallback in sync.
+// both Supabase and the localStorage fallback in sync. (Used by the bulk
+// status-update tool on the Attendees tab.)
 async function setLinkStatus(eventId, attendeeId, status) {
   const ev = events.find(e => e.id === eventId); if (!ev) return;
   ev.attendees = ev.attendees || [];
@@ -1249,15 +1364,16 @@ async function setLinkStatus(eventId, attendeeId, status) {
   }
 }
 
-// Reverts any other "assigned" link this attendee holds among the boxed
-// events back to "responded-yes", since an attendee can only be assigned
-// to one event at a time.
-async function clearOtherAssignments(attendeeId, exceptEventId) {
-  for (const ev of boxedEvents()) {
-    if (ev.id === exceptEventId) continue;
-    const l = getLink(ev, attendeeId);
-    if (l && l.status === 'assigned') await setLinkStatus(ev.id, attendeeId, 'responded-yes');
+// Places (or un-places) an attendee into an event's box on the Assign
+// board. This is independent of their "responded-yes"/"attended"/etc.
+// status — dragging someone into a box does NOT change their status.
+async function setAssignedEvent(attendeeId, eventId) {
+  const a = attendees.find(x => x.id === attendeeId); if (!a) return;
+  if (USE_SUPABASE) {
+    await sb('PATCH', `attendees?id=eq.${attendeeId}`, { assigned_event_id: eventId });
   }
+  a.assignedEventId = eventId;
+  if (!USE_SUPABASE) lsSave();
 }
 
 function attendedTogether(id1, id2) {
@@ -1292,23 +1408,27 @@ function genderRatioLabel(group) {
   return parts.length ? parts.join(' : ') : '—';
 }
 
+// Which of the boxed (upcoming) events has this attendee responded "yes"
+// to? Shown on every card, and never cleared by dragging.
+function respondedYesBoxedEvents(a, boxes) {
+  return boxes.filter(ev => { const l = getLink(ev, a.id); return l && l.status === 'responded-yes'; });
+}
+
 // An attendee shows up on the Assign board if, among the boxed (upcoming)
-// events, they have a "responded-yes" link (→ Repository) or an
-// "assigned" link (→ that event's box).
+// events, they have a "responded-yes" link (→ Repository, unless already
+// placed in a box) or their assignedEventId points at one of the boxes.
 function assignBoardData() {
   const boxes = boxedEvents();
+  const boxIds = new Set(boxes.map(ev => ev.id));
   const repo = [];
   const byEvent = {}; boxes.forEach(ev => byEvent[ev.id] = []);
   attendees.forEach(a => {
-    let assignedEventId = null;
-    let hasRespondedYes = false;
-    boxes.forEach(ev => {
-      const l = getLink(ev, a.id);
-      if (l && l.status === 'assigned') assignedEventId = ev.id;
-      if (l && l.status === 'responded-yes') hasRespondedYes = true;
-    });
-    if (assignedEventId) byEvent[assignedEventId].push(a);
-    else if (hasRespondedYes) repo.push(a);
+    const hasRespondedYes = respondedYesBoxedEvents(a, boxes).length > 0;
+    if (a.assignedEventId && boxIds.has(a.assignedEventId)) {
+      byEvent[a.assignedEventId].push(a);
+    } else if (hasRespondedYes) {
+      repo.push(a);
+    }
   });
   const byFirst = (a,b) => (a.firstname||'').toLowerCase() < (b.firstname||'').toLowerCase() ? -1 : 1;
   repo.sort(byFirst);
@@ -1316,10 +1436,17 @@ function assignBoardData() {
   return { boxes, repo, byEvent };
 }
 
-function assignCardHTML(a) {
-  return `<div class="assign-card" draggable="true" data-id="${a.id}" ondragstart="onAssignDragStart(event)" ondragend="onAssignDragEnd(event)">
+function assignCardHTML(a, boxes) {
+  const yesEvents = respondedYesBoxedEvents(a, boxes);
+  const badges = yesEvents.length
+    ? yesEvents.map(ev => `<span class="badge badge-green">${ev.name}</span>`).join('')
+    : `<span style="font-size:10px;color:var(--text3);">No "Yes" events</span>`;
+  return `<div class="assign-card" data-id="${a.id}" onpointerdown="onAssignPointerDown(event)">
     <div class="avatar ${avColor(fullName(a))}">${initials(a)}</div>
-    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${fullName(a)}</span>
+    <div style="flex:1;min-width:0;">
+      <div class="assign-card-name">${fullName(a)}</div>
+      <div class="assign-card-events">${badges}</div>
+    </div>
   </div>`;
 }
 
@@ -1344,8 +1471,8 @@ function renderAssign() {
       <div class="assign-col-title">Repository</div>
       <div class="assign-col-meta"><span class="badge badge-gray">${repo.length}</span></div>
     </div>
-    <div class="assign-col-body" id="assign-body-repository" ondragover="onAssignDragOver(event)" ondragleave="onAssignDragLeave(event)" ondrop="onAssignDrop(event,'repository')">
-      ${repo.length ? repo.map(assignCardHTML).join('') : '<div class="assign-empty-hint">No one waiting here.</div>'}
+    <div class="assign-col-body" id="assign-body-repository">
+      ${repo.length ? repo.map(a=>assignCardHTML(a,boxes)).join('') : '<div class="assign-empty-hint">No one waiting here.</div>'}
     </div>
   </div>`;
 
@@ -1362,8 +1489,8 @@ function renderAssign() {
           <span class="badge badge-pink" title="Gender ratio">${genderRatioLabel(group)}</span>
         </div>
       </div>
-      <div class="assign-col-body" id="assign-body-${ev.id}" ondragover="onAssignDragOver(event)" ondragleave="onAssignDragLeave(event)" ondrop="onAssignDrop(event,'${ev.id}')">
-        ${group.length ? group.map(assignCardHTML).join('') : '<div class="assign-empty-hint">Drag attendees here.</div>'}
+      <div class="assign-col-body" id="assign-body-${ev.id}">
+        ${group.length ? group.map(a=>assignCardHTML(a,boxes)).join('') : '<div class="assign-empty-hint">Drag attendees here.</div>'}
       </div>
     </div>`;
   });
@@ -1371,37 +1498,73 @@ function renderAssign() {
   board.innerHTML = html;
 }
 
-let assignDraggedId = null;
-function onAssignDragStart(e) {
-  assignDraggedId = e.currentTarget.dataset.id;
-  e.currentTarget.classList.add('dragging');
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', assignDraggedId);
+// ── Pointer-based drag & drop (works for mouse AND touch) ─────────────────
+let assignDrag = null; // { id, card, ghost, startX, startY, dragging, lastTarget }
+const ASSIGN_DRAG_THRESHOLD = 6;
+
+function onAssignPointerDown(e) {
+  const card = e.currentTarget;
+  assignDrag = {
+    id: card.dataset.id, card, ghost: null,
+    startX: e.clientX, startY: e.clientY,
+    offsetX: e.clientX - card.getBoundingClientRect().left,
+    offsetY: e.clientY - card.getBoundingClientRect().top,
+    dragging: false, lastTarget: null, pointerId: e.pointerId,
+  };
+  document.addEventListener('pointermove', onAssignPointerMove);
+  document.addEventListener('pointerup', onAssignPointerUp);
+  document.addEventListener('pointercancel', onAssignPointerUp);
 }
-function onAssignDragEnd(e) {
-  e.currentTarget.classList.remove('dragging');
-  assignDraggedId = null;
-}
-function onAssignDragOver(e) {
+
+function onAssignPointerMove(e) {
+  if (!assignDrag) return;
+  const dx = e.clientX - assignDrag.startX, dy = e.clientY - assignDrag.startY;
+  if (!assignDrag.dragging) {
+    if (Math.abs(dx) < ASSIGN_DRAG_THRESHOLD && Math.abs(dy) < ASSIGN_DRAG_THRESHOLD) return;
+    // Start dragging: build a ghost clone that follows the pointer.
+    assignDrag.dragging = true;
+    assignDrag.card.classList.add('dragging');
+    const rect = assignDrag.card.getBoundingClientRect();
+    const ghost = assignDrag.card.cloneNode(true);
+    ghost.className = 'assign-card assign-ghost';
+    ghost.style.width = rect.width + 'px';
+    ghost.style.left = rect.left + 'px';
+    ghost.style.top = rect.top + 'px';
+    document.body.appendChild(ghost);
+    assignDrag.ghost = ghost;
+  }
   e.preventDefault();
-  e.currentTarget.classList.add('drag-over');
+  const rect = assignDrag.card.getBoundingClientRect();
+  assignDrag.ghost.style.left = (e.clientX - assignDrag.offsetX) + 'px';
+  assignDrag.ghost.style.top = (e.clientY - assignDrag.offsetY) + 'px';
+
+  // Temporarily hide the ghost so elementFromPoint can see what's beneath it.
+  assignDrag.ghost.style.display = 'none';
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  assignDrag.ghost.style.display = '';
+  const targetBody = under ? under.closest('.assign-col-body') : null;
+  if (targetBody !== assignDrag.lastTarget) {
+    if (assignDrag.lastTarget) assignDrag.lastTarget.classList.remove('drag-over');
+    if (targetBody) targetBody.classList.add('drag-over');
+    assignDrag.lastTarget = targetBody;
+  }
 }
-function onAssignDragLeave(e) {
-  e.currentTarget.classList.remove('drag-over');
-}
-async function onAssignDrop(e, boxId) {
-  e.preventDefault();
-  e.currentTarget.classList.remove('drag-over');
-  const attendeeId = e.dataTransfer.getData('text/plain') || assignDraggedId;
-  if (!attendeeId) return;
+
+async function onAssignPointerUp(e) {
+  document.removeEventListener('pointermove', onAssignPointerMove);
+  document.removeEventListener('pointerup', onAssignPointerUp);
+  document.removeEventListener('pointercancel', onAssignPointerUp);
+  if (!assignDrag) return;
+  const { id, card, ghost, dragging, lastTarget } = assignDrag;
+  if (ghost) ghost.remove();
+  card.classList.remove('dragging');
+  if (lastTarget) lastTarget.classList.remove('drag-over');
+  assignDrag = null;
+  if (!dragging || !lastTarget) return;
+  const boxId = lastTarget.id.replace('assign-body-', '');
   setLoading(true);
   try {
-    if (boxId === 'repository') {
-      await clearOtherAssignments(attendeeId, null);
-    } else {
-      await clearOtherAssignments(attendeeId, boxId);
-      await setLinkStatus(boxId, attendeeId, 'assigned');
-    }
+    await setAssignedEvent(id, boxId === 'repository' ? null : boxId);
     renderAssign();
   } catch (err) {
     toast('Error updating assignment: ' + err.message, true);
@@ -1469,6 +1632,7 @@ async function deleteEvent(id) {
       await sb('DELETE',`events?id=eq.${id}`);
     }
     events=events.filter(e=>e.id!==id);
+    attendees.forEach(a=>{ if(a.assignedEventId===id) a.assignedEventId=null; });
     if(!USE_SUPABASE) lsSave();
     toast('Event deleted.');
     closeModal('modal-event-detail'); renderEvents();
@@ -1497,7 +1661,7 @@ function openEventDetail(id) {
         <div class="event-history-item">
           <div style="display:flex;align-items:center;gap:8px;">
             <div class="avatar ${avColor(fullName(a))}" style="width:26px;height:26px;font-size:10px;">${initials(a)}</div>
-            <div><div class="event-hist-name">${fullName(a)}</div><div class="event-hist-date">${a.insta?'@'+a.insta:''}</div></div>
+            <div><div class="event-hist-name">${fullName(a)}</div></div>
           </div>
           ${statusBadge(a._status)}
         </div>`).join(''):'<p style="font-size:13px;color:var(--text3);padding:6px 0;">No attendees assigned yet.</p>'}
@@ -1513,8 +1677,8 @@ function exportJSON() {
     exportedAt: new Date().toISOString(),
     attendees: attendees.map(a => ({
       id: a.id, firstname: a.firstname, lastname: a.lastname,
-      insta: a.insta, notes: a.notes, gender: a.gender,
-      partnerId: a.partnerId, invitedById: a.invitedById,
+      notes: a.notes, gender: a.gender,
+      partnerId: a.partnerId, invitedById: a.invitedById, assignedEventId: a.assignedEventId,
       createdAt: a.createdAt,
     })),
     events: events.map(ev => ({
